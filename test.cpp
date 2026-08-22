@@ -1,28 +1,16 @@
-#include <iostream>
 #include <chrono>
-#include <cstdlib>
 
-auto start = std::chrono::steady_clock::now();
-    
-uint64_t factorial(uint64_t num)
+void expensive_work()
 {
-    if(num < 2) {return 1;}
-    return num * factorial(num--);
+    volatile long long x = 0;
+
+    for (long long i = 0; i < 1'000'000'000; ++i)
+    {
+        x += i;
+    }
 }
 
-void spin(uint64_t num)
+int main()
 {
-    // std::cout << "spin happened\n";
-    auto end = std::chrono::steady_clock::now();
-    auto diff = std::chrono::duration_cast<std::chrono::seconds>(end - start).count();
-    if(diff > 5) {std::exit(0);}
-
-    uint64_t fact = factorial(num);
-    spin(num++);
-}
-
-int main() 
-{
-    spin(1);
-    return 0;
+    expensive_work();
 }
