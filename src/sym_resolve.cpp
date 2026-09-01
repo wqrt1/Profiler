@@ -9,10 +9,6 @@
 #include <cstddef>
 
 #include <buffer.h>
-
-#include <windows.h>
-#include <dbghelp.h>
-
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -139,15 +135,13 @@ std::string resolve_address(HANDLE hProcess, DWORD64 address) {
     }
 
     // Convert ASLR runtime address -> RVA
-    DWORD64 rva =
-        address - runtimeBase;
+    DWORD64 rva = address - runtimeBase;
 
     // Convert RVA -> address addr2line expects.
-    DWORD64 symbolAddress =
-        preferredBase + rva;
+    DWORD64 symbolAddress = preferredBase + rva;
 
     std::cout << std::format(
-        "runtime=0x{:X} runtimeBase=0x{:X} "
+        "runtime=0x{:X} runtimeBase=0x{:X} " 
         "rva=0x{:X} preferred=0x{:X} "
         "symbolAddress=0x{:X}\n",
         address,

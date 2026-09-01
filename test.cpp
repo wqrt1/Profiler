@@ -9,8 +9,38 @@ void expensive_work()
         x += i;
     }
 }
+void expensive_work2()
+{
+    volatile long long x = 0;
+
+    for (long long i = 0; i < 1'000'000'000; ++i)
+    {
+        x += i;
+    }
+}
+void expensive_work3()
+{
+    volatile long long x = 0;
+
+    for (long long i = 0; i < 1'000'000'000; ++i)
+    {
+        x += i;
+    }
+}
+void expensive_work4()
+{
+    volatile long long x = 0;
+
+    for (long long i = 0; i < 1'000'000'0000; ++i)
+    {
+        x += i;
+    }
+}
 
 int main()
 {
     expensive_work();
+    expensive_work2();
+    expensive_work3();
+    expensive_work4();
 }
