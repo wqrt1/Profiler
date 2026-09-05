@@ -7,8 +7,10 @@
 #include <vector>
 #include <string>
 #include <cstddef>
+#include <unordered_map>
 
 #include <buffer.h>
+#include <sampler.h>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -87,7 +89,7 @@ DWORD64 get_preferred_image_base(const std::string& path)
     );
 }
 
-std::string resolve_address(HANDLE hProcess, DWORD64 address) {
+std::string resolve_address(HANDLE hProcess, DWORD64 address, const profiler_options& options) {
     if (address == 0)
         return "<null>";
 
@@ -140,6 +142,7 @@ std::string resolve_address(HANDLE hProcess, DWORD64 address) {
     // Convert RVA -> address addr2line expects.
     DWORD64 symbolAddress = preferredBase + rva;
 
+    if(options.verbose) {
     std::cout << std::format(
         "runtime=0x{:X} runtimeBase=0x{:X} " 
         "rva=0x{:X} preferred=0x{:X} "
@@ -149,7 +152,7 @@ std::string resolve_address(HANDLE hProcess, DWORD64 address) {
         rva,
         preferredBase,
         symbolAddress
-    );
+    );}
 
     std::string command = std::format(
         "addr2line -e \"{}\" -f -C 0x{:X}",
@@ -189,13 +192,23 @@ std::string resolve_address(HANDLE hProcess, DWORD64 address) {
     return functionName;
 }
 
-auto resolve_all_samples(HANDLE hProcess, RingBuffer samples) {
+auto resolve_all_samples(HANDLE hProcess, RingBuffer samples, const profiler_options& options) {
     std::vector<sampleSIM> resolved_samples{samples.get_sample_count()};
+
+    static std::unordered_map<DWORD64, std::string> address_cache;
 
     for(Sample s : samples) {
         std::vector<std::string> callstack{};
         for(std::size_t i{}; i < s.frame_count; i++) {
-            callstack.push_back(resolve_address(hProcess, s.addresses[i]));
+            const auto address = s.addresses[i];
+
+            if(auto it = address_cache.find(address); it != address_cache.end()) {
+                callstack.push_back(it->second);
+            } else {
+                auto symbol = resolve_address(hProcess, address, options);
+                address_cache.insert({address, symbol});
+                callstack.push_back(std::move(symbol));
+            }
         }
         resolved_samples.emplace_back(s.ts, callstack);
     }

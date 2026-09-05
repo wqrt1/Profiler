@@ -59,7 +59,8 @@ std::vector<function_time> generate_times(const std::vector<event>& events) {
         if (e.type == "start") {
             callstack.emplace(e.name, e.ts, std::chrono::steady_clock::duration::zero());
         } else if (e.type == "end") {
-            times.emplace_back(e.name, e.ts - callstack.top().ts, callstack.top().self_time);
+            const frame& f = callstack.top();
+            times.emplace_back(f.name, e.ts - f.ts, f.self_time);
             callstack.pop();
         }
         last_ts = e.ts;
@@ -78,9 +79,20 @@ void sort_times(std::vector<function_time>& times) {
     std::sort(times.rbegin(), times.rend());
 }
 
+void debug_samples(const std::vector<sampleSIM>& samples) {
+    int i{};
+    for (const sampleSIM& s : samples) {
+        std::cout << std::format("[{}]", i++);
+        for (const std::string func : s.callstack) {
+            std::cout << " " << func;
+        }
+        std::cout << '\n';
+    }
+}
+
 void debug_events(const std::vector<event>& events) {
     for (const event& e : events) {
-        std::cout << e.type << " " << e.name << " at <time_point>" << '\n';
+        std::cout << e.name << " " << e.type << " at <time_point>" << '\n';
     }
 }
 
@@ -89,8 +101,8 @@ void debug_times(const std::vector<function_time>& times) {
     std::cout << "-------------------------------------------------" << '\n';
     for (const function_time& t : times) {
         std::cout << std::format("{}\t\t{}\t{}", t.name, 
-            std::chrono::duration_cast<std::chrono::microseconds>(t.total_time).count(), 
-            std::chrono::duration_cast<std::chrono::microseconds>(t.self_time).count() )
+            std::chrono::duration_cast<std::chrono::milliseconds>(t.total_time).count(), 
+            std::chrono::duration_cast<std::chrono::milliseconds>(t.self_time).count() )
             << '\n';
     }
 }

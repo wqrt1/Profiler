@@ -31,10 +31,14 @@ void expensive_work4()
 {
     volatile long long x = 0;
 
-    for (long long i = 0; i < 1'000'000'0000; ++i)
+    for (long long i = 0; i < 10'000'000'000; ++i)
     {
         x += i;
     }
+
+    expensive_work();
+    expensive_work2();
+    expensive_work3();
 }
 
 int main()

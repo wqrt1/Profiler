@@ -31,4 +31,8 @@ std::vector<function_time> generate_times(const std::vector<event>& events);
 
 std::vector<event> generate_events(const std::vector<sampleSIM>& samples);
 
+void debug_samples(const std::vector<sampleSIM>& samples);
+
+void debug_events(const std::vector<event>& events);
+
 void debug_times(const std::vector<function_time>& times);

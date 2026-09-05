@@ -17,7 +17,7 @@ struct profiler_options
 
 PROCESS_INFORMATION launch_process(const profiler_options& options);
 
-RingBuffer run_sampler(PROCESS_INFORMATION pi, profiler_options options);
+RingBuffer run_sampler(PROCESS_INFORMATION pi, const profiler_options& options);
 
 profiler_options parse_arguments(int argc, char* argv[]);
 

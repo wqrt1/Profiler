@@ -7,4 +7,4 @@
 
 #include <buffer.h>
 
-std::vector<sampleSIM> resolve_all_samples(HANDLE hProcess, RingBuffer samples);
+std::vector<sampleSIM> resolve_all_samples(HANDLE hProcess, RingBuffer samples, const profiler_options& options);

@@ -13,7 +13,7 @@ int main(int argc, char* argv[])
 
     RingBuffer samples = run_sampler(pi, options);
 
-    std::vector<sampleSIM> processed_samples = resolve_all_samples(pi.hProcess, samples);
+    std::vector<sampleSIM> processed_samples = resolve_all_samples(pi.hProcess, samples, options);
 
     kill_sampler(pi);
 
@@ -21,15 +21,11 @@ int main(int argc, char* argv[])
 
     auto times = generate_times(events);
 
+    debug_samples(processed_samples);
+    
+    debug_events(events);
+
     debug_times(times);
 
-    // for(sampleSIM s : processed_samples) {
-    //     for(std::string a : s.callstack) {
-    //         std::cout << a << ' ';
-    //     }
-    //     std::cout << '\n';
-    // }
-
-    // std::cout << &samples;
     return 0;
 }

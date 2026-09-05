@@ -61,7 +61,9 @@ void sample_once(HANDLE hProcess, HANDLE hThread, std::chrono::steady_clock::tim
         }
     } // guard destructor resumes the thread here
 
-    Sample sample(addresses, ts, count);
+    std::cout << count << '\n'; //checking counts
+
+    Sample sample{ts, addresses, count};
     samples.add(sample);
 }
 
@@ -79,7 +81,7 @@ void sampler(int frequency, PROCESS_INFORMATION pi, RingBuffer& samples) {
     }
 }
 
-void load_modules(HANDLE hProcess, DWORD pid)
+void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options)
 {
     HANDLE snapshot = CreateToolhelp32Snapshot(
         TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
@@ -113,13 +115,14 @@ void load_modules(HANDLE hProcess, DWORD pid)
     {
         DWORD64 base = reinterpret_cast<DWORD64>(module.modBaseAddr);
 
+        if(options.verbose) {
         std::cout << module.szModule
             << " 0x"
             << std::hex
             << base
             << " - 0x"
             << (base + module.modBaseSize)
-            << '\n';
+            << '\n';};
 
         DWORD64 loaded = SymLoadModuleEx(
             hProcess,
@@ -193,12 +196,12 @@ PROCESS_INFORMATION launch_process(const profiler_options& options) {
     }
     
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    load_modules(pi.hProcess, pi.dwProcessId);
+    load_modules(pi.hProcess, pi.dwProcessId, options);
 
     return pi;
 }
 
-RingBuffer run_sampler(PROCESS_INFORMATION pi, profiler_options options) {
+RingBuffer run_sampler(PROCESS_INFORMATION pi, const profiler_options& options) {
     RingBuffer samples(MAX_SAMPLES);
     sampler(options.frequency, pi, samples);
 

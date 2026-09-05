@@ -7,24 +7,10 @@
 constexpr std::size_t MAX_FRAMES{64};
 constexpr std::size_t MAX_SAMPLES{100000};
 
-class Sample {
-public:
+struct Sample {
     std::chrono::steady_clock::time_point ts{};
     std::array<DWORD64, MAX_FRAMES> addresses{};
     std::size_t frame_count{};
-
-    Sample() = default;
-
-    Sample(const std::array<DWORD64, MAX_FRAMES>& addresses, std::chrono::steady_clock::time_point ts, std::size_t frame_count) 
-        : addresses(addresses), ts(ts), frame_count(frame_count) {}
-
-    std::size_t getFrameCount() const {
-        return frame_count;
-    }
-
-    const auto& getAddresses() const {
-        return addresses;
-    }
 };
 
 class RingBuffer {
