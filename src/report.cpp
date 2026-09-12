@@ -10,7 +10,7 @@
 
 static std::chrono::steady_clock::time_point final_ts{};
 
-std::vector<event> generate_events(const std::vector<sampleSIM>& samples) {
+std::vector<event> generate_events(const std::vector<sampleSIM>& samples, std::chrono::steady_clock::duration& duration) {
     std::vector<event> events;
 
     auto first_events = samples[0].callstack;
@@ -44,6 +44,7 @@ std::vector<event> generate_events(const std::vector<sampleSIM>& samples) {
         events.emplace_back("end", final_ts, *it);
     }
 
+    duration = final_ts - first_ts;
     return events;
 }
 
@@ -96,13 +97,30 @@ void debug_events(const std::vector<event>& events) {
     }
 }
 
-void debug_times(const std::vector<function_time>& times) {
-    std::cout << "Function\tTotal\tSelf\t%" << '\n';
-    std::cout << "-------------------------------------------------" << '\n';
-    for (const function_time& t : times) {
-        std::cout << std::format("{}\t\t{}\t{}", t.name, 
-            std::chrono::duration_cast<std::chrono::milliseconds>(t.total_time).count(), 
-            std::chrono::duration_cast<std::chrono::milliseconds>(t.self_time).count() )
-            << '\n';
+void debug_times(const std::vector<function_time>& times)
+{
+    constexpr int NAME_WIDTH = 45;
+    constexpr int TIME_WIDTH = 12;
+
+    std::cout << std::format(
+        "{:<{}} {:>{}} {:>{}}\n",
+        "Function",   NAME_WIDTH,
+        "Self (ms)",  TIME_WIDTH,
+        "Total (ms)", TIME_WIDTH
+    );
+
+    std::cout << std::string(NAME_WIDTH + TIME_WIDTH * 2 + 2, '-') << '\n';
+
+    for (const auto& t : times) {
+        double self_ms = std::chrono::duration<double, std::milli>(t.self_time).count();
+
+        double total_ms = std::chrono::duration<double, std::milli>(t.total_time).count();
+
+        std::cout << std::format(
+            "{:<{}} {:>{}.3f} {:>{}.3f}\n",
+            t.name,   NAME_WIDTH,
+            self_ms,  TIME_WIDTH,
+            total_ms, TIME_WIDTH
+        );
     }
 }

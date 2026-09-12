@@ -15,6 +15,7 @@
 
 struct profiler_options {
     std::string executable;
+    std::string pass_args;
     int frequency = 1000; // microseconds
     int maxFrames = 64;
     bool verbose = false;
@@ -26,16 +27,20 @@ struct ThreadSuspendGuard {
     ~ThreadSuspendGuard() { ResumeThread(h); }
 };
 
-void sample_once(HANDLE hProcess, HANDLE hThread, std::chrono::steady_clock::time_point ts, RingBuffer& samples) {
+void sample_once(HANDLE hProcess, HANDLE hThread, RingBuffer& samples) {
     std::array<DWORD64, MAX_FRAMES> addresses{};
     std::size_t count = 0;
     CONTEXT ctx{};
     ctx.ContextFlags = CONTEXT_FULL;
 
+    auto ts = std::chrono::steady_clock::now();
     {
         ThreadSuspendGuard guard(hThread); // suspend on construction
 
-        if (!GetThreadContext(hThread, &ctx)) return;
+        if (!GetThreadContext(hThread, &ctx)) {
+            std::cerr << "GetThreadContext failed: " << GetLastError() << '\n';
+            return;
+        }
 
         STACKFRAME64 frame{};
         frame.AddrPC.Offset    = ctx.Rip;
@@ -45,24 +50,44 @@ void sample_once(HANDLE hProcess, HANDLE hThread, std::chrono::steady_clock::tim
         frame.AddrStack.Offset = ctx.Rsp;
         frame.AddrStack.Mode   = AddrModeFlat;
 
-        addresses[count++] = ctx.Rip;
+        //addresses[count++] = ctx.Rip;
 
         while (count < MAX_FRAMES)
         {
-            if (!StackWalk64(IMAGE_FILE_MACHINE_AMD64, hProcess, hThread, &frame, &ctx, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr)) {break;}
+            BOOL ok = StackWalk64(IMAGE_FILE_MACHINE_AMD64, hProcess, hThread, &frame, &ctx, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr);
+
+            if (!ok) {
+                // std::cerr << std::format(
+                //     "StackWalk64 failed\n"
+                //     "RIP = 0x{:X}\n"
+                //     "RSP = 0x{:X}\n"
+                //     "RBP = 0x{:X}\n"
+                //     "error = {}\n",
+                //     ctx.Rip,
+                //     ctx.Rsp,
+                //     ctx.Rbp,
+                //     GetLastError()
+                // );
+                break;
+            }
+
+            // std::cout << std::format(
+            //     "walked to PC=0x{:X}, SP=0x{:X}, FP=0x{:X}\n",
+            //     frame.AddrPC.Offset,
+            //     frame.AddrStack.Offset,
+            //     frame.AddrFrame.Offset
+            // );
 
             DWORD64 address = frame.AddrPC.Offset;
 
-            if (address == 0) {break;}
+            if (address == 0) break;
 
-            if (address == addresses[count - 1]) {break;}
+            if (count > 0 && address == addresses[count - 1]) break;
 
             addresses[count++] = address;
         }
     } // guard destructor resumes the thread here
-
-    std::cout << count << '\n'; //checking counts
-
+    
     Sample sample{ts, addresses, count};
     samples.add(sample);
 }
@@ -72,24 +97,28 @@ void sampler(int frequency, PROCESS_INFORMATION pi, RingBuffer& samples) {
     auto nextSample = clock::now();
 
     while (true) {
-        if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {break;}
+        DWORD status = WaitForSingleObject(pi.hProcess, 0);
+        if (status == WAIT_OBJECT_0) break; // process terminated
 
-        sample_once(pi.hProcess, pi.hThread, clock::now(), samples);
+        if (status == WAIT_FAILED) { // process failed? or otherwise error
+            std::cerr << "WaitForSingleObject failed: " << GetLastError() << '\n';
+            break;
+        }
+
+        sample_once(pi.hProcess, pi.hThread, samples);
 
         nextSample += std::chrono::microseconds(frequency);
         std::this_thread::sleep_until(nextSample);
     }
 }
 
-void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options)
-{
+void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options) {
     HANDLE snapshot = CreateToolhelp32Snapshot(
         TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32,
         pid
     );
 
-    if (snapshot == INVALID_HANDLE_VALUE)
-    {
+    if (snapshot == INVALID_HANDLE_VALUE) {
         std::cerr << std::format(
             "Module snapshot failed: {}\n",
             GetLastError()
@@ -100,8 +129,7 @@ void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options)
     MODULEENTRY32 module{};
     module.dwSize = sizeof(module);
 
-    if (!Module32First(snapshot, &module))
-    {
+    if (!Module32First(snapshot, &module)) {
         std::cerr << std::format(
             "Module32First failed: {}\n",
             GetLastError()
@@ -111,18 +139,18 @@ void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options)
         return;
     }
 
-    do
-    {
+    do {
         DWORD64 base = reinterpret_cast<DWORD64>(module.modBaseAddr);
 
         if(options.verbose) {
-        std::cout << module.szModule
-            << " 0x"
-            << std::hex
-            << base
-            << " - 0x"
-            << (base + module.modBaseSize)
-            << '\n';};
+            std::cout << module.szModule
+                << " 0x"
+                << std::hex
+                << base
+                << " - 0x"
+                << (base + module.modBaseSize)
+                << '\n';
+        };
 
         DWORD64 loaded = SymLoadModuleEx(
             hProcess,
@@ -135,13 +163,9 @@ void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options)
             0
         );
 
-        if (loaded == 0)
-        {
+        if (loaded == 0) {
             DWORD error = GetLastError();
 
-            // Zero does not necessarily mean catastrophic
-            // failure if module was already registered,
-            // so print it for now.
             std::cerr << std::format(
                 "SymLoadModuleEx: {} error {}\n",
                 module.szModule,
@@ -154,15 +178,15 @@ void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options)
     CloseHandle(snapshot);
 }
 
-PROCESS_INFORMATION launch_process(const profiler_options& options) {
-    std::string processName{options.executable};
+PROCESS_INFORMATION launch_process(const profiler_options& options, BOOL loadmodules=true) {
+    std::string commandLine{options.executable + options.pass_args};
     PROCESS_INFORMATION pi{};
     STARTUPINFOA si{};
     si.cb = sizeof(si);
 
     BOOL success = CreateProcessA(
-        nullptr,
-        processName.data(),
+        options.executable.c_str(), // not nessesary
+        commandLine.data(),
         nullptr,
         nullptr,
         FALSE,
@@ -173,45 +197,46 @@ PROCESS_INFORMATION launch_process(const profiler_options& options) {
         &pi
     );
 
-    if (!success)
-    {
+    if (!success) {
         throw std::runtime_error("Failed to lauch process");
     }
 
-    SymSetOptions(
-        SYMOPT_UNDNAME |
-        SYMOPT_DEFERRED_LOADS |
-        SYMOPT_DEBUG
-    );
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_DEBUG);
 
-    if (!SymInitialize(pi.hProcess, nullptr, FALSE))
-    {
+    if (!SymInitialize(pi.hProcess, nullptr, FALSE)) {
         throw std::runtime_error(std::format("SymInitialize failed: {}" , GetLastError()));
     }
 
     // Start the target.
-    if (ResumeThread(pi.hThread) == static_cast<DWORD>(-1))
-    {
+    if (ResumeThread(pi.hThread) == static_cast<DWORD>(-1)) {
         std::cerr << "ResumeThread failed: " << GetLastError() << '\n';
     }
     
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    load_modules(pi.hProcess, pi.dwProcessId, options);
-
+    if (loadmodules) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10)); // race condition quick fix
+        load_modules(pi.hProcess, pi.dwProcessId, options);
+    }
     return pi;
+}
+
+std::chrono::steady_clock::duration time_raw(PROCESS_INFORMATION pi, const profiler_options& options) {
+    using clock = std::chrono::steady_clock;
+    auto start_ts = clock::now();
+
+    WaitForSingleObject(pi.hProcess, INFINITE);
+
+    auto end_ts = clock::now();
+    return end_ts - start_ts;
 }
 
 RingBuffer run_sampler(PROCESS_INFORMATION pi, const profiler_options& options) {
     RingBuffer samples(MAX_SAMPLES);
     sampler(options.frequency, pi, samples);
 
-    // load_modules(pi.hProcess, pi.dwProcessId);
-    WaitForSingleObject(pi.hProcess, INFINITE);
-
     return samples;
 }
 
-void kill_sampler(PROCESS_INFORMATION pi) {
+void process_cleanup(PROCESS_INFORMATION pi) {
     SymCleanup(pi.hProcess);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
@@ -220,29 +245,32 @@ void kill_sampler(PROCESS_INFORMATION pi) {
 profiler_options parse_arguments(int argc, char* argv[]) {
     profiler_options options;
 
-    if (argc < 2)
-    {
+    if (argc < 2) {
         throw std::runtime_error("Usage: myprofiler <executable>");
     }
     options.executable = argv[1];
 
-    for(int i{2}; i < argc; i++)
-    {
-        std::string arg = argv[i];
+    for(int i{2}; i < argc; i++) {
+        std::string arg(argv[i]);
 
-        if(arg == "--freq")
-        {
+        if(arg == "--freq") {
             if(i + 1 >= argc) {throw std::runtime_error("--freq requires a value (microseconds)");}
             i++;
             options.frequency = std::stoi(argv[i]);
-        } else if(arg == "--max-frames")
-        {
+        } else if(arg == "--max-frames") {
             if(i + 1 >= argc) {throw std::runtime_error("--max-frames requires a value");}
             i++;
             options.maxFrames = std::stoi(argv[i]);
-        } else if(arg == "--verbose")
-        {
+        } else if(arg == "--verbose") {
             options.verbose = true;
+        } else if (arg == "pass-args") {
+            std::string result{};
+            for (int j{i+1}; argv[j] != nullptr; j++) {
+                result += ' ';
+                result += argv[j];
+            }
+            options.pass_args += result;
+            break;
         }
     }
 

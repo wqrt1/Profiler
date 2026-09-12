@@ -29,7 +29,7 @@ struct function_time {
 
 std::vector<function_time> generate_times(const std::vector<event>& events);
 
-std::vector<event> generate_events(const std::vector<sampleSIM>& samples);
+std::vector<event> generate_events(const std::vector<sampleSIM>& samples, std::chrono::steady_clock::duration& duration);
 
 void debug_samples(const std::vector<sampleSIM>& samples);
 
