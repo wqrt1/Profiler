@@ -1,6 +1,6 @@
 #pragma once
 
-#include <windows.h>
+#include <windows.h> 
 #include <chrono>
 #include <array>
 
@@ -15,11 +15,11 @@ struct Sample {
 
 class RingBuffer {
 private:
-    std::size_t size;
-    std::vector<Sample> samples;
-
     std::size_t indexAdd{};
     std::size_t indexPop{};
+
+    std::size_t size;
+    std::vector<Sample> samples;
 
     typedef Sample* iterator;
     typedef const Sample* const_iterator;
@@ -46,7 +46,7 @@ public:
             throw std::runtime_error("RingBuffer empty or overflow");
 
         Sample sample = samples[indexPop % size];
-        ++indexPop;
+        indexPop++;
 
         return sample;
     }

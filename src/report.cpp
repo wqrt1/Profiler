@@ -14,7 +14,7 @@ std::vector<event> generate_events(const std::vector<sampleSIM>& samples, std::c
     std::vector<event> events;
 
     auto first_events = samples[0].callstack;
-    std::chrono::steady_clock::time_point first_ts = samples[0].ts;
+    std::chrono::steady_clock::time_point first_ts = samples.front().ts;
     for (std::string function_name : first_events) {
         events.emplace_back("start", first_ts, function_name);
     }
@@ -118,7 +118,7 @@ void debug_times(const std::vector<function_time>& times)
 
         std::cout << std::format(
             "{:<{}} {:>{}.3f} {:>{}.3f}\n",
-            t.name,   NAME_WIDTH,
+            t.name.substr(0, NAME_WIDTH),   NAME_WIDTH,
             self_ms,  TIME_WIDTH,
             total_ms, TIME_WIDTH
         );

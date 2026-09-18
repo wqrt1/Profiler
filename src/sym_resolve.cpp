@@ -12,6 +12,7 @@
 
 #include <buffer.h>
 #include <sampler.h>
+#include <sym_resolve.h>
 #include <cstdio>
 #include <fstream>
 
@@ -29,13 +30,13 @@ std::string resolve_address(HANDLE hProcess, DWORD64 address, const profiler_opt
     DWORD64 displacement = 0;
 
     if(!SymFromAddr(hProcess, address, &displacement, symbol)) {
-        if (options.verbose) {
+        if (options.debug) {
             std::cerr << std::format("SymFromAddr failed for 0x{:X}: error={}\n", address, GetLastError());
         }
         return "<unkown>";
     }
 
-    if (options.verbose) {
+    if (options.debug) {
         std::cout << std::format(
             "address=0x{:X} symbol={} "
             "symbolBase=0x{:X} displacement=0x{:X}\n",
@@ -47,13 +48,17 @@ std::string resolve_address(HANDLE hProcess, DWORD64 address, const profiler_opt
     return std::string(symbol->Name);
 }
 
-auto resolve_all_samples(HANDLE hProcess, RingBuffer samples, const profiler_options& options) {
-    std::vector<sampleSIM> resolved_samples{samples.get_sample_count()};
+std::vector<sampleSIM> resolve_all_samples(HANDLE hProcess, RingBuffer samples, const profiler_options& options, profiler_stats& stats) {
+    std::vector<sampleSIM> resolved_samples;
+    resolved_samples.reserve(samples.get_sample_count());
+    stats.valid_samples = samples.get_sample_count();
 
     static std::unordered_map<DWORD64, std::string> address_cache;
 
     for(Sample s : samples) {
         std::vector<std::string> callstack{};
+        stats.running_avg(s.frame_count);
+
         for(std::size_t i{}; i < s.frame_count; i++) {
             const auto address = s.addresses[i];
 

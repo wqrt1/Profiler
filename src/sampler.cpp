@@ -12,14 +12,7 @@
 #include <vector>
 
 #include <buffer.h>
-
-struct profiler_options {
-    std::string executable;
-    std::string pass_args;
-    int frequency = 1000; // microseconds
-    int maxFrames = 64;
-    bool verbose = false;
-};
+#include <sampler.h>
 
 struct ThreadSuspendGuard {
     HANDLE h;
@@ -54,34 +47,12 @@ void sample_once(HANDLE hProcess, HANDLE hThread, RingBuffer& samples) {
 
         while (count < MAX_FRAMES)
         {
-            BOOL ok = StackWalk64(IMAGE_FILE_MACHINE_AMD64, hProcess, hThread, &frame, &ctx, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr);
-
-            if (!ok) {
-                // std::cerr << std::format(
-                //     "StackWalk64 failed\n"
-                //     "RIP = 0x{:X}\n"
-                //     "RSP = 0x{:X}\n"
-                //     "RBP = 0x{:X}\n"
-                //     "error = {}\n",
-                //     ctx.Rip,
-                //     ctx.Rsp,
-                //     ctx.Rbp,
-                //     GetLastError()
-                // );
-                break;
-            }
-
-            // std::cout << std::format(
-            //     "walked to PC=0x{:X}, SP=0x{:X}, FP=0x{:X}\n",
-            //     frame.AddrPC.Offset,
-            //     frame.AddrStack.Offset,
-            //     frame.AddrFrame.Offset
-            // );
+            BOOL success = StackWalk64(IMAGE_FILE_MACHINE_AMD64, hProcess, hThread, &frame, &ctx, nullptr, SymFunctionTableAccess64, SymGetModuleBase64, nullptr);
+            if (!success) break;
 
             DWORD64 address = frame.AddrPC.Offset;
 
             if (address == 0) break;
-
             if (count > 0 && address == addresses[count - 1]) break;
 
             addresses[count++] = address;
@@ -110,6 +81,13 @@ void sampler(int frequency, PROCESS_INFORMATION pi, RingBuffer& samples) {
         nextSample += std::chrono::microseconds(frequency);
         std::this_thread::sleep_until(nextSample);
     }
+}
+
+RingBuffer run_sampler(PROCESS_INFORMATION pi, const profiler_options& options) {
+    RingBuffer samples(MAX_SAMPLES);
+    sampler(options.frequency, pi, samples);
+
+    return samples;
 }
 
 void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options) {
@@ -142,7 +120,7 @@ void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options) {
     do {
         DWORD64 base = reinterpret_cast<DWORD64>(module.modBaseAddr);
 
-        if(options.verbose) {
+        if(options.debug) {
             std::cout << module.szModule
                 << " 0x"
                 << std::hex
@@ -178,8 +156,13 @@ void load_modules(HANDLE hProcess, DWORD pid, const profiler_options& options) {
     CloseHandle(snapshot);
 }
 
-PROCESS_INFORMATION launch_process(const profiler_options& options, BOOL loadmodules=true) {
-    std::string commandLine{options.executable + options.pass_args};
+PROCESS_INFORMATION launch_process(const profiler_options& options, BOOL loadmodules) {
+    std::string commandLine = options.executable;
+    if (!options.pass_args.empty()) {
+        commandLine += ' ';
+        commandLine += options.pass_args;
+    }
+
     PROCESS_INFORMATION pi{};
     STARTUPINFOA si{};
     si.cb = sizeof(si);
@@ -229,13 +212,6 @@ std::chrono::steady_clock::duration time_raw(PROCESS_INFORMATION pi, const profi
     return end_ts - start_ts;
 }
 
-RingBuffer run_sampler(PROCESS_INFORMATION pi, const profiler_options& options) {
-    RingBuffer samples(MAX_SAMPLES);
-    sampler(options.frequency, pi, samples);
-
-    return samples;
-}
-
 void process_cleanup(PROCESS_INFORMATION pi) {
     SymCleanup(pi.hProcess);
     CloseHandle(pi.hThread);
@@ -246,30 +222,72 @@ profiler_options parse_arguments(int argc, char* argv[]) {
     profiler_options options;
 
     if (argc < 2) {
-        throw std::runtime_error("Usage: myprofiler <executable>");
+        throw std::runtime_error("Usage: proline [profiler-options] <executable> [executable-args], Try proline --help");
     }
-    options.executable = argv[1];
 
-    for(int i{2}; i < argc; i++) {
+    for(int i{1}; i < argc; i++) {
         std::string arg(argv[i]);
 
         if(arg == "--freq") {
-            if(i + 1 >= argc) {throw std::runtime_error("--freq requires a value (microseconds)");}
+            if(i + 1 >= argc) {throw std::runtime_error("--freq requires a value (Hertz)");}
             i++;
-            options.frequency = std::stoi(argv[i]);
+            options.set_freq(std::stoi(argv[i]));
+
         } else if(arg == "--max-frames") {
             if(i + 1 >= argc) {throw std::runtime_error("--max-frames requires a value");}
             i++;
-            options.maxFrames = std::stoi(argv[i]);
+            options.max_frames = std::stoi(argv[i]);
+
         } else if(arg == "--verbose") {
             options.verbose = true;
-        } else if (arg == "pass-args") {
-            std::string result{};
-            for (int j{i+1}; argv[j] != nullptr; j++) {
-                result += ' ';
-                result += argv[j];
+
+        } else if(arg == "--debug") {
+            options.debug = true;
+
+        } else if(arg == "--output") {
+            if(i + 1 >= argc) {throw std::runtime_error("--output requires a value");}
+            i++;
+            options.output_file = argv[i];
+
+        } else if(arg == "--format") {
+            if(i + 1 >= argc) {throw std::runtime_error("--format requires a value");}
+            i++;
+            std::string format(argv[i]); 
+
+            if (format == "json")  {
+                options.format = file_format::json;
+            } else if (format == "folded") {
+                options.format = file_format::folded;
+            } else if (format == "text") {
+                options.format = file_format::text;
+            } else {
+                throw std::runtime_error("--format recieved unknown/unsupported format");
             }
-            options.pass_args += result;
+
+        } else if(arg == "--help") {
+            std::cout << "Usage: proline --tags <executable> [executable-args]\n"
+                << "Tags:\n"
+                << "  --freq <hz>       Sampling frequency (default: 1000hz)\n"
+                << "  --max-frames <n>  Maximum stack depth (default: 64)\n"
+                << "  --output <file>   Output report\n"
+                << "  --format <type>   text | json | folded (default: text)\n"
+                << "  --verbose         Detailed diagnostics\n"
+                << "  --debug           Profiler runtime info\n"
+                << "  --help            Show help\n"
+                << "  --version         Show version\n";
+            std::exit(0);
+
+        } else if(arg == "--version") {
+            std::cout << "proline.exe (Built by wqrt1) 1.0.0";
+            std::exit(0);
+
+        } else {
+            options.executable = argv[i];
+            for (int j{i+1}; j < argc; j++) {
+                if (!options.pass_args.empty())
+                    options.pass_args += ' ';
+                options.pass_args += argv[j];
+            }
             break;
         }
     }
